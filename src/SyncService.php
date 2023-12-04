@@ -38,9 +38,8 @@ class SyncService
                 ];
             }
         } else {
-            $lastPulledAt = Carbon::createFromTimestampUTC($lastPulledAt);
-            $lastPulledAt->setTimezone(config('app.timezone'));
-
+            $lastPulledAt = Carbon::createFromTimestamp($lastPulledAt);
+            
             foreach ($this->models as $name => $class) {
                 $changes[$name] = [
                     'created' => (new $class)::withoutTrashed()
