@@ -39,7 +39,7 @@ class SyncService
             }
         } else {
             $lastPulledAt = Carbon::createFromTimestamp($lastPulledAt);
-            
+
             foreach ($this->models as $name => $class) {
                 $changes[$name] = [
                     'created' => (new $class)::withoutTrashed()
@@ -93,11 +93,18 @@ class SyncService
                         return $assoc;
                     }, collect());
 
+
+                if (method_exists($class, 'beforePersistWatermelon')) {
+                    $data = call_user_func([(new $class), 'beforePersistWatermelon'], $create->toArray());
+                } else {
+                    $data = $create->toArray();
+                }
+
                 try {
                     $model = $class::query()->where(config('watermelon.identifier'), $create->get(config('watermelon.identifier')))->firstOrFail();
-                    $model->update($create->toArray());
+                    $model->update($data);
                 } catch (ModelNotFoundException $e) {
-                    $class::query()->create($create->toArray());
+                    $class::query()->create($data);
                 }
             });
         }
@@ -127,15 +134,21 @@ class SyncService
                         throw new ConflictException;
                     }
 
+                    if (method_exists($class, 'beforePersistWatermelon')) {
+                        $data = call_user_func([(new $class), 'beforePersistWatermelon'], $update->toArray());
+                    } else {
+                        $data = $update->toArray();
+                    }
+
                     try {
                         $task = $class::query()
                             ->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))
                             ->watermelon()
                             ->firstOrFail();
-                        $task->update($update->toArray());
+                        $task->update($data);
                     } catch (ModelNotFoundException $e) {
                         try {
-                            $class::query()->create($update->toArray());
+                            $class::query()->create($data);
                         } catch (QueryException $e) {
                             throw new ConflictException;
                         }
