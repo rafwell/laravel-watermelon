@@ -5,10 +5,10 @@ namespace NathanHeffley\LaravelWatermelon\Tests\Feature;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
-use NathanHeffley\LaravelWatermelon\Tests\models\Task;
+use NathanHeffley\LaravelWatermelon\Tests\models\CustomTask as Task;
 use NathanHeffley\LaravelWatermelon\Tests\TestCase;
 
-class SingleModelPullTest extends TestCase
+class CustomWatermelonIDModelPullTest extends TestCase
 {
     use RefreshDatabase;
 
@@ -16,7 +16,9 @@ class SingleModelPullTest extends TestCase
     {
         parent::setUp();
 
-        Carbon::setTestNowAndTimezone('2021-08-07 20:00:00', 'EST');
+        Carbon::setTestNow('2021-08-07 20:00:00');
+
+        Config::set('watermelon.identifier', 'custom_wm_id');
 
         Config::set('watermelon.models', [
             'tasks' => Task::class,
@@ -96,19 +98,19 @@ class SingleModelPullTest extends TestCase
     public function it_can_respond_to_pull_requests_with_data_and_no_last_pulled_at_timestamp(): void
     {
         Task::query()->create([
-            'watermelon_id' => 'firsttaskid',
+            'custom_wm_id' => 'firsttaskid',
             'content' => 'First Task',
             'is_completed' => false,
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'secondtaskid',
+            'custom_wm_id' => 'secondtaskid',
             'content' => 'Second Task',
             'is_completed' => true,
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'deletedtaskid',
+            'custom_wm_id' => 'deletedtaskid',
             'content' => 'Deleted Task',
             'is_completed' => true,
             'deleted_at' => now(),
@@ -143,19 +145,19 @@ class SingleModelPullTest extends TestCase
     public function it_can_respond_to_pull_requests_with_data_and_a_null_last_pulled_at_timestamp(): void
     {
         Task::query()->create([
-            'watermelon_id' => 'firsttaskid',
+            'custom_wm_id' => 'firsttaskid',
             'content' => 'First Task',
             'is_completed' => false,
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'secondtaskid',
+            'custom_wm_id' => 'secondtaskid',
             'content' => 'Second Task',
             'is_completed' => true,
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'deletedtaskid',
+            'custom_wm_id' => 'deletedtaskid',
             'content' => 'Deleted Task',
             'is_completed' => true,
             'deleted_at' => now(),
@@ -190,19 +192,19 @@ class SingleModelPullTest extends TestCase
     public function it_can_respond_to_pull_requests_with_data_and_a_zero_last_pulled_at_timestamp(): void
     {
         Task::query()->create([
-            'watermelon_id' => 'firsttaskid',
+            'custom_wm_id' => 'firsttaskid',
             'content' => 'First Task',
             'is_completed' => false,
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'secondtaskid',
+            'custom_wm_id' => 'secondtaskid',
             'content' => 'Second Task',
             'is_completed' => true,
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'deletedtaskid',
+            'custom_wm_id' => 'deletedtaskid',
             'content' => 'Deleted Task',
             'is_completed' => true,
             'deleted_at' => now(),
@@ -237,7 +239,7 @@ class SingleModelPullTest extends TestCase
     public function it_can_respond_to_pull_requests_with_data_and_a_last_pulled_at_timestamp(): void
     {
         Task::query()->create([
-            'watermelon_id' => 'firsttaskid',
+            'custom_wm_id' => 'firsttaskid',
             'content' => 'First Task',
             'is_completed' => false,
             'created_at' => now()->subMinutes(11),
@@ -245,7 +247,7 @@ class SingleModelPullTest extends TestCase
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'secondtaskid',
+            'custom_wm_id' => 'secondtaskid',
             'content' => 'Second Task',
             'is_completed' => true,
             'created_at' => now()->subMinutes(9),
@@ -253,7 +255,7 @@ class SingleModelPullTest extends TestCase
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'updatedtaskid',
+            'custom_wm_id' => 'updatedtaskid',
             'content' => 'Updated Task',
             'is_completed' => false,
             'created_at' => now()->subMinutes(11),
@@ -261,7 +263,7 @@ class SingleModelPullTest extends TestCase
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'deletedtaskid',
+            'custom_wm_id' => 'deletedtaskid',
             'content' => 'Deleted Task',
             'is_completed' => true,
             'created_at' => now()->subMinutes(11),
@@ -300,7 +302,7 @@ class SingleModelPullTest extends TestCase
     public function it_can_respond_to_pull_requests_with_lots_of_deleted_records_and_a_last_pulled_at_timestamp(): void
     {
         Task::query()->create([
-            'watermelon_id' => 'firsttaskid',
+            'custom_wm_id' => 'firsttaskid',
             'content' => 'First Task',
             'is_completed' => false,
             'created_at' => now()->subMinutes(11),
@@ -309,7 +311,7 @@ class SingleModelPullTest extends TestCase
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'secondtaskid',
+            'custom_wm_id' => 'secondtaskid',
             'content' => 'Second Task',
             'is_completed' => true,
             'created_at' => now()->subMinutes(11),
@@ -318,7 +320,7 @@ class SingleModelPullTest extends TestCase
         ]);
 
         Task::query()->create([
-            'watermelon_id' => 'thirdtaskid',
+            'custom_wm_id' => 'thirdtaskid',
             'content' => 'Third Task',
             'is_completed' => true,
             'created_at' => now()->subMinutes(9),
