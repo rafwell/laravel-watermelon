@@ -2,12 +2,14 @@
 
 namespace NathanHeffley\LaravelWatermelon;
 
+use Exception;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Log;
 use NathanHeffley\LaravelWatermelon\Exceptions\ConflictException;
 
 class SyncService
@@ -101,7 +103,7 @@ class SyncService
                 }
 
                 try {
-                    $model = $class::query()->where(config('watermelon.identifier'), $create->get(config('watermelon.identifier')))->firstOrFail();
+                    $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $create->get(config('watermelon.identifier')))->firstOrFail();
                     $model->update($data);
                 } catch (ModelNotFoundException $e) {
                     $class::query()->create($data);
@@ -130,8 +132,14 @@ class SyncService
                             return $assoc;
                         }, collect());
 
-                    if ($class::onlyTrashed()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->count() > 0) {
-                        throw new ConflictException;
+
+                    $wasDeleted = false;
+                    
+                    if ($class::withoutGlobalScopes()->onlyTrashed()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->count() > 0) {
+                        //Deal with conflict when the app send an update and the row is deleted on server
+                        $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->first();
+                        $model->restore();
+                        $wasDeleted = true;
                     }
 
                     if (method_exists($class, 'beforePersistWatermelon')) {
@@ -141,23 +149,40 @@ class SyncService
                     }
 
                     try {
-                        $task = $class::query()
+                        $task = $class::withoutGlobalScopes()
                             ->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))
                             ->watermelon()
                             ->firstOrFail();
+                        
                         $task->update($data);
+                        
+                        if($wasDeleted){
+                            //delete again after sync
+                            $task->delete();
+                        }
                     } catch (ModelNotFoundException $e) {
+
+                        Log::debug(
+                            [
+                                $e->getMessage(),
+                                $data,
+                                config('watermelon.identifier'),
+                                $update->get(config('watermelon.identifier'))
+                            ]
+                        );
+
                         try {
                             $class::query()->create($data);
                         } catch (QueryException $e) {
+                            Log::error($e);
                             throw new ConflictException;
                         }
                     }
                 });
             }
         } catch (ConflictException $e) {
+            Log::error($e);
             DB::rollBack();
-
             return response()->json('', 409);
         }
 
