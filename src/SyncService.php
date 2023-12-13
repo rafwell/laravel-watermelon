@@ -75,41 +75,55 @@ class SyncService
     {
         DB::beginTransaction();
 
+        $createColletion = collect();
+
         foreach ($this->models as $name => $class) {
             if (!$request->input($name)) {
                 continue;
             }
 
-            collect($request->input("$name.created"))->each(function ($create) use ($class) {
-                $create = collect((new $class)->toWatermelonArray())
-                    ->keys()
-                    ->map(function ($col) use ($create) {
-                        return [$col, $create[$col]];
-                    })->reduce(function ($assoc, $pair) {
-                        list($key, $value) = $pair;
-                        if ($key === 'id') {
-                            $assoc[config('watermelon.identifier')] = $value;
-                        } else {
-                            $assoc[$key] = $value;
-                        }
-                        return $assoc;
-                    }, collect());
-
-
-                if (method_exists($class, 'beforePersistWatermelon')) {
-                    $data = call_user_func([(new $class), 'beforePersistWatermelon'], $create->toArray());
-                } else {
-                    $data = $create->toArray();
-                }
-
-                try {
-                    $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $create->get(config('watermelon.identifier')))->firstOrFail();
-                    $model->update($data);
-                } catch (ModelNotFoundException $e) {
-                    $class::query()->create($data);
-                }
+            collect($request->input("$name.created"))->each(function ($create) use ($class, $createColletion) {
+                $createColletion->push([
+                    'class' => $class,
+                    'data' => $create,
+                    'order' => $create['created_at'] ?? 0,
+                ]);
             });
         }
+
+        $createColletion->sortBy('order')->each(function($item){
+            $class = $item['class'];
+            $create = $item['data'];
+
+            $create = collect((new $class)->toWatermelonArray())
+                ->keys()
+                ->map(function ($col) use ($create) {
+                    return [$col, $create[$col]];
+                })->reduce(function ($assoc, $pair) {
+                    list($key, $value) = $pair;
+                    if ($key === 'id') {
+                        $assoc[config('watermelon.identifier')] = $value;
+                    } else {
+                        $assoc[$key] = $value;
+                    }
+                    return $assoc;
+                }, collect());
+
+
+            if (method_exists($class, 'beforePersistWatermelon')) {
+                $data = call_user_func([(new $class), 'beforePersistWatermelon'], $create->toArray());
+            } else {
+                $data = $create->toArray();
+            }
+
+            try {
+                $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $create->get(config('watermelon.identifier')))->firstOrFail();
+                $model->update($data);
+            } catch (ModelNotFoundException $e) {
+                $class::query()->create($data);
+            }
+        
+        });
 
         try {
             foreach ($this->models as $name => $class) {
