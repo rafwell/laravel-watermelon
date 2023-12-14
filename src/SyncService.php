@@ -118,9 +118,14 @@ class SyncService
 
             try {
                 $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $create->get(config('watermelon.identifier')))->firstOrFail();
-                $model->update($data);
+                $model->fill($data);
+                $model->updated_at = $data['updated_at'];
+                $model->save();
             } catch (ModelNotFoundException $e) {
-                $class::query()->create($data);
+                $task = $class::query()->fill($data);
+                $task->created_at = $data['created_at'];
+                $task->updated_at = $data['updated_at'];
+                $task->save();
             }
         
         });
@@ -168,7 +173,9 @@ class SyncService
                             ->watermelon()
                             ->firstOrFail();
                         
-                        $task->update($data);
+                        $task->fill($data);
+                        $task->updated_at = $data['updated_at'];
+                        $task->save();
                         
                         if($wasDeleted){
                             //delete again after sync
@@ -186,7 +193,10 @@ class SyncService
                         );
 
                         try {
-                            $class::query()->create($data);
+                            $task = $class::query()->fill($data);
+                            $task->created_at = $data['created_at'];
+                            $task->updated_at = $data['updated_at'];
+                            $task->save();
                         } catch (QueryException $e) {
                             Log::error($e);
                             throw new ConflictException;
