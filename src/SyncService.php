@@ -122,7 +122,7 @@ class SyncService
                 $model->updated_at = $data['updated_at'];
                 $model->save();
             } catch (ModelNotFoundException $e) {
-                $task = $class::query()->fill($data);
+                $task = (new $class)->fill($data);
                 $task->created_at = $data['created_at'];
                 $task->updated_at = $data['updated_at'];
                 $task->save();
@@ -193,7 +193,7 @@ class SyncService
                         );
 
                         try {
-                            $task = $class::query()->fill($data);
+                            $task = (new $class)->fill($data);
                             $task->created_at = $data['created_at'];
                             $task->updated_at = $data['updated_at'];
                             $task->save();
