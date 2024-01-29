@@ -52,10 +52,9 @@ class SyncService
                     'updated' => (new $class)::withoutTrashed()
                         ->where(function($q) use($request, $lastPulledAt, $name){
                             $hasColumnMigration = $this->hasColumnsMigrations($request, $name);
-
+                            $q->where('created_at', '<=', $lastPulledAt);
                             if(!$hasColumnMigration){    
-                                $q->where('created_at', '<=', $lastPulledAt)
-                                  ->where('updated_at', '>', $lastPulledAt);
+                                $q->where('updated_at', '>', $lastPulledAt);
                             }
                         })
                         ->watermelon()
