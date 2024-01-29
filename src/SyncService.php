@@ -50,8 +50,14 @@ class SyncService
                         ->get()
                         ->map->toWatermelonArray(),
                     'updated' => (new $class)::withoutTrashed()
-                        ->where('created_at', '<=', $lastPulledAt)
-                        ->where('updated_at', '>', $lastPulledAt)
+                        ->where(function($q) use($request, $lastPulledAt, $name){
+                            $hasColumnMigration = $this->hasColumnsMigrations($request, $name);
+
+                            if(!$hasColumnMigration){    
+                                $q->where('created_at', '<=', $lastPulledAt)
+                                  ->where('updated_at', '>', $lastPulledAt);
+                            }
+                        })
                         ->watermelon()
                         ->get()
                         ->map->toWatermelonArray(),
@@ -223,5 +229,20 @@ class SyncService
         DB::commit();
 
         return response()->json('', 204);
+    }
+
+    protected function hasColumnsMigrations(Request $request, $tableName)
+    {
+        $migration = json_decode($request->migration, true);
+
+        if(!$migration){
+            return false;
+        }
+
+        $columns = array_filter($migration['columns'], function($columns) use($tableName){
+            return $columns['table'] === $tableName;
+        });
+
+        return count($columns) > 0;
     }
 }
