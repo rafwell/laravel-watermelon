@@ -11,6 +11,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Log;
 use NathanHeffley\LaravelWatermelon\Exceptions\ConflictException;
+use Rafwell\Simplegrid\Export\Excel;
 
 class SyncService
 {
@@ -18,11 +19,14 @@ class SyncService
 
     public function __construct(array $models)
     {
+        set_time_limit(0);
         $this->models = $models;
     }
 
     public function pull(Request $request): JsonResponse
     {
+        $models = $this->filterModels((int) $request->schema_version);
+
         $lastPulledAt = $request->get('last_pulled_at');
 
         $timestamp = now()->timestamp;
@@ -30,7 +34,7 @@ class SyncService
         $changes = [];
 
         if ($lastPulledAt === 'null') {
-            foreach ($this->models as $name => $class) {
+            foreach ($models as $name => $class) {
                 $changes[$name] = [
                     'created' => (new $class)::watermelon()
                         ->get()
@@ -42,18 +46,25 @@ class SyncService
         } else {
             $lastPulledAt = Carbon::createFromTimestamp($lastPulledAt);
 
-            foreach ($this->models as $name => $class) {
+            foreach ($models as $name => $class) {
                 $changes[$name] = [
                     'created' => (new $class)::withoutTrashed()
-                        ->where('created_at', '>', $lastPulledAt)
+                        ->where(function ($q) use ($request, $lastPulledAt, $name) {
+                            $hasTableMigration = $this->hasTableMigration($request, $name);
+                            //Log::debug('hasTableMigration: ', ['name' => $name, ' hasTableMigration' => $hasTableMigration]);
+
+                            if (!$hasTableMigration) {
+                                $q->where('created_at', '>', $lastPulledAt);
+                            }
+                        })
                         ->watermelon()
                         ->get()
                         ->map->toWatermelonArray(),
                     'updated' => (new $class)::withoutTrashed()
-                        ->where(function($q) use($request, $lastPulledAt, $name){
+                        ->where(function ($q) use ($request, $lastPulledAt, $name) {
                             $hasColumnMigration = $this->hasColumnsMigrations($request, $name);
                             $q->where('created_at', '<=', $lastPulledAt);
-                            if(!$hasColumnMigration){    
+                            if (!$hasColumnMigration) {
                                 $q->where('updated_at', '>', $lastPulledAt);
                             }
                         })
@@ -78,11 +89,13 @@ class SyncService
 
     public function push(Request $request): JsonResponse
     {
+        $models = $this->filterModels((int) $request->schema_version);
+
         DB::beginTransaction();
 
         $createColletion = collect();
 
-        foreach ($this->models as $name => $class) {
+        foreach ($models as $name => $class) {
             if (!$request->input($name)) {
                 continue;
             }
@@ -96,7 +109,7 @@ class SyncService
             });
         }
 
-        $createColletion->sortBy('order')->each(function($item){
+        $createColletion->sortBy('order')->each(function ($item) {
             $class = $item['class'];
             $create = $item['data'];
 
@@ -132,11 +145,10 @@ class SyncService
                 $task->updated_at = $data['updated_at'];
                 $task->save();
             }
-        
         });
 
         try {
-            foreach ($this->models as $name => $class) {
+            foreach ($models as $name => $class) {
                 if (!$request->input($name)) {
                     continue;
                 }
@@ -158,7 +170,7 @@ class SyncService
 
 
                     $wasDeleted = false;
-                    
+
                     if ($class::withoutGlobalScopes()->onlyTrashed()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->count() > 0) {
                         //Deal with conflict when the app send an update and the row is deleted on server
                         $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->first();
@@ -177,18 +189,18 @@ class SyncService
                             ->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))
                             ->watermelon()
                             ->firstOrFail();
-                        
+
                         $task->fill($data);
                         $task->updated_at = $data['updated_at'];
                         $task->save();
-                        
-                        if($wasDeleted){
+
+                        if ($wasDeleted) {
                             //delete again after sync
                             $task->delete();
                         }
                     } catch (ModelNotFoundException $e) {
 
-                        Log::debug(
+                        /*Log::debug(
                             [
                                 $e->getMessage(),
                                 $data,
@@ -196,6 +208,7 @@ class SyncService
                                 $update->get(config('watermelon.identifier'))
                             ]
                         );
+                        */
 
                         try {
                             $task = (new $class)->fill($data);
@@ -215,7 +228,7 @@ class SyncService
             return response()->json('', 409);
         }
 
-        foreach ($this->models as $name => $class) {
+        foreach ($models as $name => $class) {
             if (!$request->input($name)) {
                 continue;
             }
@@ -234,14 +247,72 @@ class SyncService
     {
         $migration = json_decode($request->migration, true);
 
-        if(!$migration){
+        if (!$migration) {
             return false;
         }
 
-        $columns = array_filter($migration['columns'], function($columns) use($tableName){
+        $columns = array_filter($migration['columns'], function ($columns) use ($tableName) {
             return $columns['table'] === $tableName;
         });
 
         return count($columns) > 0;
+    }
+
+    protected function hasTableMigration(Request $request, $tableName)
+    {
+        $migration = json_decode($request->migration, true);
+
+        if (!$migration) {
+            return false;
+        }
+
+        return in_array($tableName, $migration['tables']);
+    }
+
+    protected function filterModels(int $schemaVersion)
+    {
+
+        $models = [];
+
+        foreach ($this->models as $name => $model) {
+            if (!$this->availableAtThisSchemaVersion($name, $schemaVersion)) {
+                //Log::debug('Model not available at this schema version', ['model' => $name, 'schemaVersion' => $schemaVersion]);
+                continue;
+            }
+
+            $models[$name] = $model;
+        }
+
+        return $models;
+    }
+
+    protected function availableAtThisSchemaVersion(string $tableName, int $schemaVersion)
+    {
+        $migrations = config('watermelon.migrations');
+
+        if (!$migrations) {
+            return true;
+        }
+
+        $tablesNameVersionMap = [];
+
+        foreach ($this->models as $modelTableName => $model) {
+            $tablesNameVersionMap[$modelTableName] = 0;
+        }
+
+        $orderedMigrations = collect($migrations)
+            ->sortBy('toVersion');
+
+        foreach ($orderedMigrations as $migration) {
+            foreach ($migration['tables'] as $table) {
+                if (array_key_exists($table, $tablesNameVersionMap) && $tablesNameVersionMap[$table] === 0) {
+                    $tablesNameVersionMap[$table] = (int) $migration['toVersion'];
+                }
+            }
+        }
+
+        //Log::debug('tablesNameVersionMap', [$tablesNameVersionMap, $tablesNameVersionMap[$tableName], $schemaVersion]);
+
+        return $tablesNameVersionMap[$tableName] <= $schemaVersion;
     }
 }
