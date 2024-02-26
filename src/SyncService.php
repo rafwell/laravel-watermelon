@@ -89,13 +89,11 @@ class SyncService
 
     public function push(Request $request): JsonResponse
     {
-        $models = $this->filterModels((int) $request->schema_version);
-
         DB::beginTransaction();
 
         $createColletion = collect();
 
-        foreach ($models as $name => $class) {
+        foreach ($this->models as $name => $class) {
             if (!$request->input($name)) {
                 continue;
             }
@@ -148,16 +146,21 @@ class SyncService
         });
 
         try {
-            foreach ($models as $name => $class) {
+            foreach ($this->models as $name => $class) {
                 if (!$request->input($name)) {
                     continue;
                 }
 
-                collect($request->input("$name.updated"))->each(function ($update) use ($class) {
+                collect($request->input("$name.updated"))->each(function ($update) use ($class, $name) {
                     $update = collect((new $class)->toWatermelonArray())
                         ->keys()
-                        ->map(function ($col) use ($update) {
-                            return [$col, $update[$col]];
+                        ->map(function ($col) use ($update, $name) {
+                            try {
+                                return [$col, $update[$col]];
+                            } catch (Exception $e) {
+                                Log::debug('Error on update', ['col' => $col, 'update' => $update, 'table' => $name]);
+                                throw $e;
+                            }
                         })->reduce(function ($assoc, $pair) {
                             list($key, $value) = $pair;
                             if ($key === 'id') {
@@ -228,7 +231,7 @@ class SyncService
             return response()->json('', 409);
         }
 
-        foreach ($models as $name => $class) {
+        foreach ($this->models as $name => $class) {
             if (!$request->input($name)) {
                 continue;
             }
