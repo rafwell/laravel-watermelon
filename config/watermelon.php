@@ -8,8 +8,18 @@ return [
 
     'middleware' => [],
 
+    'debug_push' => env('WATERMELON_DEBUG_PUSH', false),
+
     'models' => [
-         // 'tasks' => '\App\Models\Task',
+        // 'tasks' => '\App\Models\Task',
     ],
 
+    'migrations' => [
+        //[
+        //    'toVersion' => 2,
+        //    'tables' => [
+        //        'another_table',
+        //    ]
+        //]
+    ],
 ];

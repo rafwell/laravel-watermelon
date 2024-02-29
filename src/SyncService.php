@@ -91,6 +91,10 @@ class SyncService
     {
         DB::beginTransaction();
 
+        if (config('watermelon.debug_push')) {
+            Log::debug('Watermelon.Push', $request->all());
+        }
+
         $createColletion = collect();
 
         foreach ($this->models as $name => $class) {
