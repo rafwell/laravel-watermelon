@@ -47,12 +47,12 @@ class SyncService
             $lastPulledAt = Carbon::createFromTimestamp($lastPulledAt);
 
             foreach ($models as $name => $class) {
+                $hasTableMigration = $this->hasTableMigration($request, $name);
+                $hasColumnMigration = $this->hasColumnsMigrations($request, $name);
+
                 $changes[$name] = [
                     'created' => (new $class)::withoutTrashed()
-                        ->where(function ($q) use ($request, $lastPulledAt, $name) {
-                            $hasTableMigration = $this->hasTableMigration($request, $name);
-                            //Log::debug('hasTableMigration: ', ['name' => $name, ' hasTableMigration' => $hasTableMigration]);
-
+                        ->where(function ($q) use ($lastPulledAt, $hasTableMigration) {
                             if (!$hasTableMigration) {
                                 $q->where('created_at', '>', $lastPulledAt);
                             }
@@ -60,9 +60,8 @@ class SyncService
                         ->watermelon()
                         ->get()
                         ->map->toWatermelonArray(),
-                    'updated' => (new $class)::withoutTrashed()
-                        ->where(function ($q) use ($request, $lastPulledAt, $name) {
-                            $hasColumnMigration = $this->hasColumnsMigrations($request, $name);
+                    'updated' => $hasTableMigration ? [] : (new $class)::withoutTrashed()
+                        ->where(function ($q) use ($lastPulledAt, $hasColumnMigration) {
                             $q->where('created_at', '<=', $lastPulledAt);
                             if (!$hasColumnMigration) {
                                 $q->where('updated_at', '>', $lastPulledAt);
@@ -71,7 +70,7 @@ class SyncService
                         ->watermelon()
                         ->get()
                         ->map->toWatermelonArray(),
-                    'deleted' => (new $class)::onlyTrashed()
+                    'deleted' => $hasTableMigration ? [] : (new $class)::onlyTrashed()
                         ->where('created_at', '<=', $lastPulledAt)
                         ->where('deleted_at', '>', $lastPulledAt)
                         ->watermelon()
