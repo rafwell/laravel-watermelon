@@ -28,17 +28,55 @@ class SyncService
         $models = $this->filterModels((int) $request->schema_version);
 
         $lastPulledAt = $request->get('last_pulled_at');
+        $firstSync = $request->get('first_sync');
 
         $timestamp = now()->timestamp;
+        $endFirstSync = false;
+
+        if ($firstSync === 'true') {
+            if ($lastPulledAt !== 'null') {
+                $lastPulledAt = Carbon::createFromTimestamp($lastPulledAt);
+            } else {
+                $lastPulledAt = app(config('watermelon.resolveStartDateSync'))->resolveStartDateSync($request);
+
+                if (config('watermelon.debug_pull')) {
+                    Log::info(sprintf('Watermelon.Pull: First Sync - from: %s', $lastPulledAt));
+                }
+            }
+
+            $maxCreatedAt =  app(config('watermelon.resolveMaxDateSync'))->resolveMaxDateSync($request, $lastPulledAt);
+
+            if (config('watermelon.debug_pull')) {
+                Log::info(sprintf('Watermelon.Pull: First Sync - from: %s to %s', $lastPulledAt, $maxCreatedAt));
+            }
+
+            if ($maxCreatedAt > now()) {
+                $endFirstSync = true;
+                $timestamp = now()->timestamp;
+            } else {
+                $timestamp = $maxCreatedAt->timestamp;
+            }
+        }
 
         $changes = [];
 
-        if ($lastPulledAt === 'null') {
+        if ($lastPulledAt === 'null' || $firstSync === 'true') {
+
             foreach ($models as $name => $class) {
+                $createdArray = (new $class)::watermelon()
+                    ->where(function ($q) use ($lastPulledAt, $maxCreatedAt) {
+                        $q->where('created_at', '>=', $lastPulledAt)
+                            ->where('created_at', '<', $maxCreatedAt);
+                    })
+                    ->get()
+                    ->map->toWatermelonArray();
+
+                if (config('watermelon.debug_pull')) {
+                    Log::info(sprintf('Watermelon.Pull: %s  - from: %s to %s - count: %s - size: %s', $name, $lastPulledAt, $maxCreatedAt, count($createdArray), strlen(json_encode($createdArray))));
+                }
+
                 $changes[$name] = [
-                    'created' => (new $class)::watermelon()
-                        ->get()
-                        ->map->toWatermelonArray(),
+                    'created' => $createdArray,
                     'updated' => [],
                     'deleted' => [],
                 ];
@@ -83,6 +121,7 @@ class SyncService
         return response()->json([
             'changes' => $changes,
             'timestamp' => $timestamp,
+            'end_first_sync' => $firstSync !== 'true' || $endFirstSync,
         ]);
     }
 
