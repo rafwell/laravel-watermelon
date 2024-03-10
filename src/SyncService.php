@@ -64,9 +64,11 @@ class SyncService
 
             foreach ($models as $name => $class) {
                 $createdArray = (new $class)::watermelon()
-                    ->where(function ($q) use ($lastPulledAt, $maxCreatedAt) {
-                        $q->where('created_at', '>=', $lastPulledAt)
-                            ->where('created_at', '<', $maxCreatedAt);
+                    ->where(function ($q) use ($lastPulledAt, $maxCreatedAt, $firstSync) {
+                        if ($firstSync === 'true') {
+                            $q->where('created_at', '>=', $lastPulledAt)
+                                ->where('created_at', '<', $maxCreatedAt);
+                        }
                     })
                     ->get()
                     ->map->toWatermelonArray();
