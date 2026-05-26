@@ -22,6 +22,14 @@ return [
         // 'tasks' => '\App\Models\Task',
     ],
 
+    /*
+     * Lookup / reference tables: always sent in full on pull (ignore created_at windows).
+     * Use for tiny global enums (status, types) referenced by transactional tables.
+     */
+    'always_pull_full' => [
+        // Example: 'status_ordens_servicos',
+    ],
+
     'migrations' => [
         //[
         //    'toVersion' => 2,

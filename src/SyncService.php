@@ -28,6 +28,7 @@ class SyncService
         $models = $this->filterModels((int) $request->schema_version);
 
         $lastPulledAt = $request->get('last_pulled_at');
+        $rawLastPulledAt = $lastPulledAt;
         $firstSync = $request->get('first_sync');
 
         $timestamp = now()->timestamp;
@@ -63,18 +64,28 @@ class SyncService
         if ($lastPulledAt === 'null' || $firstSync === 'true') {
 
             foreach ($models as $name => $class) {
-                $createdArray = (new $class)::watermelon()
-                    ->where(function ($q) use ($lastPulledAt, $maxCreatedAt, $firstSync) {
-                        if ($firstSync === 'true') {
-                            $q->where('created_at', '>=', $lastPulledAt)
-                                ->where('created_at', '<', $maxCreatedAt);
-                        }
-                    })
-                    ->get()
-                    ->map->toWatermelonArray();
+                if ($this->shouldPullFull($name)) {
+                    if (($rawLastPulledAt ?? null) === 'null') {
+                        $createdArray = (new $class)::watermelon()
+                            ->get()
+                            ->map->toWatermelonArray();
+                    } else {
+                        $createdArray = [];
+                    }
+                } else {
+                    $createdArray = (new $class)::watermelon()
+                        ->where(function ($q) use ($lastPulledAt, $maxCreatedAt, $firstSync) {
+                            if ($firstSync === 'true') {
+                                $q->where('created_at', '>=', $lastPulledAt)
+                                    ->where('created_at', '<', $maxCreatedAt);
+                            }
+                        })
+                        ->get()
+                        ->map->toWatermelonArray();
+                }
 
                 if (config('watermelon.debug_pull')) {
-                    Log::info(sprintf('Watermelon.Pull: %s  - from: %s to %s - count: %s - size: %s', $name, $lastPulledAt, $maxCreatedAt, count($createdArray), strlen(json_encode($createdArray))));
+                    Log::info(sprintf('Watermelon.Pull: %s  - from: %s to %s - count: %s - size: %s', $name, $lastPulledAt, $maxCreatedAt ?? '', count($createdArray), strlen(json_encode($createdArray))));
                 }
 
                 $changes[$name] = [
@@ -87,6 +98,22 @@ class SyncService
             $lastPulledAt = Carbon::createFromTimestamp($lastPulledAt);
 
             foreach ($models as $name => $class) {
+                if ($this->shouldPullFull($name)) {
+                    $changes[$name] = [
+                        'created' => [],
+                        'updated' => (new $class)::withoutTrashed()
+                            ->watermelon()
+                            ->get()
+                            ->map->toWatermelonArray(),
+                        'deleted' => (new $class)::onlyTrashed()
+                            ->watermelon()
+                            ->get(config('watermelon.identifier'))
+                            ->pluck(config('watermelon.identifier')),
+                    ];
+
+                    continue;
+                }
+
                 $hasTableMigration = $this->hasTableMigration($request, $name);
                 $hasColumnMigration = $this->hasColumnsMigrations($request, $name);
 
@@ -288,6 +315,11 @@ class SyncService
         DB::commit();
 
         return response()->json('', 204);
+    }
+
+    protected function shouldPullFull(string $tableName): bool
+    {
+        return in_array($tableName, config('watermelon.always_pull_full', []), true);
     }
 
     protected function hasColumnsMigrations(Request $request, $tableName)
