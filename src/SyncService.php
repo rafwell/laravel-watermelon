@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Log;
 use NathanHeffley\LaravelWatermelon\Exceptions\ConflictException;
 use Rafwell\Simplegrid\Export\Excel;
+use Throwable;
 
 class SyncService
 {
@@ -24,6 +25,16 @@ class SyncService
     }
 
     public function pull(Request $request): JsonResponse
+    {
+        try {
+            return $this->doPull($request);
+        } catch (Throwable $e) {
+            $this->logSyncFailure('pull', $request, $e);
+            throw $e;
+        }
+    }
+
+    protected function doPull(Request $request): JsonResponse
     {
         $models = $this->filterModels((int) $request->schema_version);
 
@@ -155,6 +166,19 @@ class SyncService
     }
 
     public function push(Request $request): JsonResponse
+    {
+        try {
+            return $this->doPush($request);
+        } catch (Throwable $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            $this->logSyncFailure('push', $request, $e);
+            throw $e;
+        }
+    }
+
+    protected function doPush(Request $request): JsonResponse
     {
         DB::beginTransaction();
 
@@ -393,5 +417,45 @@ class SyncService
         //Log::debug('tablesNameVersionMap', [$tablesNameVersionMap, $tablesNameVersionMap[$tableName], $schemaVersion]);
 
         return $tablesNameVersionMap[$tableName] <= $schemaVersion;
+    }
+
+    protected function logSyncFailure(string $operation, Request $request, Throwable $e): void
+    {
+        Log::error(sprintf(
+            'Watermelon sync %s failed [%s]: %s',
+            $operation,
+            class_basename($e),
+            $e->getMessage()
+        ), [
+            'exception' => $e,
+            'operation' => $operation,
+            'url' => $request->fullUrl(),
+            'method' => $request->method(),
+            'tenant_chave' => $request->header('Tenant-Chave'),
+            'user_id' => optional(auth()->user())->id,
+            'query' => $request->query(),
+            'payload_keys' => array_keys($request->all()),
+            'payload_counts' => $this->syncPayloadCounts($request),
+        ]);
+    }
+
+    protected function syncPayloadCounts(Request $request): array
+    {
+        $counts = [];
+
+        foreach (array_keys($request->all()) as $table) {
+            $chunk = $request->input($table);
+            if (! is_array($chunk)) {
+                continue;
+            }
+
+            $counts[$table] = [
+                'created' => count($chunk['created'] ?? []),
+                'updated' => count($chunk['updated'] ?? []),
+                'deleted' => count($chunk['deleted'] ?? []),
+            ];
+        }
+
+        return $counts;
     }
 }
