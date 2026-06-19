@@ -329,7 +329,7 @@ class SyncService
                         $class::query()->where(config('watermelon.identifier'), $delete)->watermelon()->delete();
                     });
                 }
-            }, attempt: 2);
+            }, attempts: 2);
         } catch (ConflictException $e) {
             Log::error($e);
             return response()->json('ConflictException', 409);
