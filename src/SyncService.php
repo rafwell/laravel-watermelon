@@ -170,9 +170,6 @@ class SyncService
         try {
             return $this->doPush($request);
         } catch (Throwable $e) {
-            if (DB::transactionLevel() > 0) {
-                DB::rollBack();
-            }
             $this->logSyncFailure('push', $request, $e);
             throw $e;
         }
@@ -180,82 +177,37 @@ class SyncService
 
     protected function doPush(Request $request): JsonResponse
     {
-        DB::beginTransaction();
-
-        if (config('watermelon.debug_push')) {
-            Log::debug('Watermelon.Push', $request->all());
-        }
-
-        $createColletion = collect();
-
-        foreach ($this->models as $name => $class) {
-            if (!$request->input($name)) {
-                continue;
-            }
-
-            collect($request->input("$name.created"))->each(function ($create) use ($class, $createColletion) {
-                $createColletion->push([
-                    'class' => $class,
-                    'data' => $create,
-                    'order' => $create['created_at'] ?? 0,
-                ]);
-            });
-        }
-
-        $createColletion->sortBy('order')->each(function ($item) {
-            $class = $item['class'];
-            $create = $item['data'];
-
-            $create = collect((new $class)->toWatermelonArray())
-                ->keys()
-                ->map(function ($col) use ($create) {
-                    return [$col, $create[$col]];
-                })->reduce(function ($assoc, $pair) {
-                    list($key, $value) = $pair;
-                    if ($key === 'id') {
-                        $assoc[config('watermelon.identifier')] = $value;
-                    } else {
-                        $assoc[$key] = $value;
-                    }
-                    return $assoc;
-                }, collect());
-
-
-            if (method_exists($class, 'beforePersistWatermelon')) {
-                $data = call_user_func([(new $class), 'beforePersistWatermelon'], $create->toArray());
-            } else {
-                $data = $create->toArray();
-            }
-
-            try {
-                $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $create->get(config('watermelon.identifier')))->firstOrFail();
-                $model->fill($data);
-                $model->updated_at = $data['updated_at'];
-                $model->save();
-            } catch (ModelNotFoundException $e) {
-                $task = (new $class)->fill($data);
-                $task->created_at = $data['created_at'];
-                $task->updated_at = $data['updated_at'];
-                $task->save();
-            }
-        });
-
         try {
-            foreach ($this->models as $name => $class) {
-                if (!$request->input($name)) {
-                    continue;
+            DB::connection('mysql')->transaction(function () use ($request) {
+
+                if (config('watermelon.debug_push')) {
+                    Log::debug('Watermelon.Push', $request->all());
                 }
 
-                collect($request->input("$name.updated"))->each(function ($update) use ($class, $name) {
-                    $update = collect((new $class)->toWatermelonArray())
+                $createColletion = collect();
+
+                foreach ($this->models as $name => $class) {
+                    if (!$request->input($name)) {
+                        continue;
+                    }
+
+                    collect($request->input("$name.created"))->each(function ($create) use ($class, $createColletion) {
+                        $createColletion->push([
+                            'class' => $class,
+                            'data' => $create,
+                            'order' => $create['created_at'] ?? 0,
+                        ]);
+                    });
+                }
+
+                $createColletion->sortBy('order')->each(function ($item) {
+                    $class = $item['class'];
+                    $create = $item['data'];
+
+                    $create = collect((new $class)->toWatermelonArray())
                         ->keys()
-                        ->map(function ($col) use ($update, $name) {
-                            try {
-                                return [$col, $update[$col]];
-                            } catch (Exception $e) {
-                                Log::debug('Error on update', ['col' => $col, 'update' => $update, 'table' => $name]);
-                                throw $e;
-                            }
+                        ->map(function ($col) use ($create) {
+                            return [$col, $create[$col]];
                         })->reduce(function ($assoc, $pair) {
                             list($key, $value) = $pair;
                             if ($key === 'id') {
@@ -267,76 +219,121 @@ class SyncService
                         }, collect());
 
 
-                    $wasDeleted = false;
-
-                    if ($class::withoutGlobalScopes()->onlyTrashed()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->count() > 0) {
-                        //Deal with conflict when the app send an update and the row is deleted on server
-                        $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->first();
-                        $model->restore();
-                        $wasDeleted = true;
-                    }
-
                     if (method_exists($class, 'beforePersistWatermelon')) {
-                        $data = call_user_func([(new $class), 'beforePersistWatermelon'], $update->toArray());
+                        $data = call_user_func([(new $class), 'beforePersistWatermelon'], $create->toArray());
                     } else {
-                        $data = $update->toArray();
+                        $data = $create->toArray();
                     }
 
                     try {
-                        $task = $class::withoutGlobalScopes()
-                            ->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))
-                            ->watermelon()
-                            ->firstOrFail();
-
-                        $task->fill($data);
+                        $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $create->get(config('watermelon.identifier')))->firstOrFail();
+                        $model->fill($data);
+                        $model->updated_at = $data['updated_at'];
+                        $model->save();
+                    } catch (ModelNotFoundException $e) {
+                        $task = (new $class)->fill($data);
+                        $task->created_at = $data['created_at'];
                         $task->updated_at = $data['updated_at'];
                         $task->save();
-
-                        if ($wasDeleted) {
-                            //delete again after sync
-                            $task->delete();
-                        }
-                    } catch (ModelNotFoundException $e) {
-
-                        /*Log::debug(
-                            [
-                                $e->getMessage(),
-                                $data,
-                                config('watermelon.identifier'),
-                                $update->get(config('watermelon.identifier'))
-                            ]
-                        );
-                        */
-
-                        try {
-                            $task = (new $class)->fill($data);
-                            $task->created_at = $data['created_at'];
-                            $task->updated_at = $data['updated_at'];
-                            $task->save();
-                        } catch (QueryException $e) {
-                            Log::error($e);
-                            throw new ConflictException;
-                        }
                     }
                 });
-            }
+
+
+                foreach ($this->models as $name => $class) {
+                    if (!$request->input($name)) {
+                        continue;
+                    }
+
+                    collect($request->input("$name.updated"))->each(function ($update) use ($class, $name) {
+                        $update = collect((new $class)->toWatermelonArray())
+                            ->keys()
+                            ->map(function ($col) use ($update, $name) {
+                                try {
+                                    return [$col, $update[$col]];
+                                } catch (Exception $e) {
+                                    Log::debug('Error on update', ['col' => $col, 'update' => $update, 'table' => $name]);
+                                    throw $e;
+                                }
+                            })->reduce(function ($assoc, $pair) {
+                                list($key, $value) = $pair;
+                                if ($key === 'id') {
+                                    $assoc[config('watermelon.identifier')] = $value;
+                                } else {
+                                    $assoc[$key] = $value;
+                                }
+                                return $assoc;
+                            }, collect());
+
+
+                        $wasDeleted = false;
+
+                        if ($class::withoutGlobalScopes()->onlyTrashed()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->count() > 0) {
+                            //Deal with conflict when the app send an update and the row is deleted on server
+                            $model = $class::withoutGlobalScopes()->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))->first();
+                            $model->restore();
+                            $wasDeleted = true;
+                        }
+
+                        if (method_exists($class, 'beforePersistWatermelon')) {
+                            $data = call_user_func([(new $class), 'beforePersistWatermelon'], $update->toArray());
+                        } else {
+                            $data = $update->toArray();
+                        }
+
+                        try {
+                            $task = $class::withoutGlobalScopes()
+                                ->where(config('watermelon.identifier'), $update->get(config('watermelon.identifier')))
+                                ->watermelon()
+                                ->firstOrFail();
+
+                            $task->fill($data);
+                            $task->updated_at = $data['updated_at'];
+                            $task->save();
+
+                            if ($wasDeleted) {
+                                //delete again after sync
+                                $task->delete();
+                            }
+                        } catch (ModelNotFoundException $e) {
+
+                            /*Log::debug(
+                                [
+                                    $e->getMessage(),
+                                    $data,
+                                    config('watermelon.identifier'),
+                                    $update->get(config('watermelon.identifier'))
+                                ]
+                            );
+                            */
+
+                            try {
+                                $task = (new $class)->fill($data);
+                                $task->created_at = $data['created_at'];
+                                $task->updated_at = $data['updated_at'];
+                                $task->save();
+                            } catch (QueryException $e) {
+                                Log::error($e);
+                                throw new ConflictException;
+                            }
+                        }
+                    });
+                }
+
+
+                foreach ($this->models as $name => $class) {
+                    if (!$request->input($name)) {
+                        continue;
+                    }
+
+                    collect($request->input("$name.deleted"))->each(function ($delete) use ($class) {
+                        $class::query()->where(config('watermelon.identifier'), $delete)->watermelon()->delete();
+                    });
+                }
+            }, attempt: 2);
         } catch (ConflictException $e) {
             Log::error($e);
-            DB::rollBack();
-            return response()->json('', 409);
+            return response()->json('ConflictException', 409);
         }
-
-        foreach ($this->models as $name => $class) {
-            if (!$request->input($name)) {
-                continue;
-            }
-
-            collect($request->input("$name.deleted"))->each(function ($delete) use ($class) {
-                $class::query()->where(config('watermelon.identifier'), $delete)->watermelon()->delete();
-            });
-        }
-
-        DB::commit();
 
         return response()->json('', 204);
     }
