@@ -326,7 +326,13 @@ class SyncService
                     }
 
                     collect($request->input("$name.deleted"))->each(function ($delete) use ($class) {
-                        $class::query()->where(config('watermelon.identifier'), $delete)->watermelon()->delete();
+                        //Exclui model a model (e não via query builder) para disparar os eventos
+                        //deleting/deleted dos models, dos quais as aplicações dependem.
+                        $class::query()
+                            ->where(config('watermelon.identifier'), $delete)
+                            ->watermelon()
+                            ->get()
+                            ->each(fn ($model) => $model->delete());
                     });
                 }
             }, attempts: 2);

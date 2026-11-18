@@ -47,6 +47,33 @@ class SingleModelPushTest extends TestCase
     }
 
     /** @test */
+    public function it_fires_model_events_when_deleting_records(): void
+    {
+        Task::query()->create([
+            'watermelon_id' => 'eventtaskid',
+            'content' => 'Event Task',
+            'is_completed' => false,
+        ]);
+
+        $deletedIds = [];
+        Task::deleted(function (Task $task) use (&$deletedIds) {
+            $deletedIds[] = $task->watermelon_id;
+        });
+
+        $response = $this->json('POST', '/sync', [
+            'tasks' => [
+                'created' => [],
+                'updated' => [],
+                'deleted' => ['eventtaskid'],
+            ],
+        ]);
+
+        $response->assertNoContent();
+        $this->assertSame(['eventtaskid'], $deletedIds);
+        $this->assertSoftDeleted('tasks', ['watermelon_id' => 'eventtaskid']);
+    }
+
+    /** @test */
     public function it_persists_push_request_changes(): void
     {
         $firstTask = Task::query()->create([
